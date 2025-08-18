@@ -1,25 +1,99 @@
-"""
-1.Choose a Dataset:
-1.1.Use a classic dataset like CIFAR-10 or CIFAR-100 (tensorflow.keras.datasets).
-
-2.Build the Initial Mode:
-2.1.Load a pre-trained model like MobileNetV2 as your base, without its final classification layer (include_top=False).
-2.2.Freeze the weights of the base model (base.trainable = False).
-2.3.Add your own custom classification "head" on top of the base model. This should include a GlobalAveragePooling2D layer and a Dense output layer with the correct number of neurons for your chosen dataset.
-2.4.Compile the model with an Adam optimizer and an appropriate loss function (e.g., SparseCategoricalCrossentropy).
-
-3.Initial Training:
-3.1.Train the model for a few epochs. At this stage, you are only training the weights of your custom classification head.
-3.2.Record the validation accuracy.
-
-4.Fine-Tuning:
-4.1.Unfreeze the base model (base.trainable = True).
-4.2.Freeze the majority of the layers in the base model, leaving only the top layers (e.g., the last 20) trainable. This allows the model to adapt its more complex feature extractors to your specific dataset.
-4.3.Crucially, re-compile the model with a very low learning rate (e.g., 1e-5). This prevents the pre-trained weights from being destroyed.
-
-5.Continue Training:
-5.1.Continue training the model for several more epochs.
-5.2.Monitor the validation accuracy. Check and report the improvement over the initial training phase.
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.datasets import cifar10
 
 
-"""
+def load_data():
+    """Load and preprocess the CIFAR-10 dataset."""
+    (train_images, train_labels), (test_images, test_labels) = cifar10.load_data()
+    train_images = train_images.astype("float32") / 255.0
+    test_images = test_images.astype("float32") / 255.0
+    return (train_images, train_labels), (test_images, test_labels)
+
+
+def build_model(num_classes: int = 10):
+    """Create a MobileNetV2-based model for CIFAR-10."""
+    base_model = tf.keras.applications.MobileNetV2(
+        input_shape=(32, 32, 3), include_top=False, weights="imagenet"
+    )
+    base_model.trainable = False
+
+    inputs = tf.keras.Input(shape=(32, 32, 3))
+    x = tf.keras.applications.mobilenet_v2.preprocess_input(inputs)
+    x = base_model(x, training=False)
+    x = layers.GlobalAveragePooling2D()(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+    model = tf.keras.Model(inputs, outputs)
+
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"],
+    )
+    return model, base_model
+
+
+def initial_training(model, train_ds, val_ds, epochs: int = 1):
+    """Train only the classification head and return validation accuracy."""
+    history = model.fit(
+        train_ds[0],
+        train_ds[1],
+        batch_size=64,
+        validation_data=val_ds,
+        epochs=epochs,
+        verbose=2,
+    )
+    return history.history["val_accuracy"][-1]
+
+
+def fine_tune(model, base_model, train_ds, val_ds, epochs: int = 1):
+    """Unfreeze top layers of the base model and continue training."""
+    base_model.trainable = True
+    for layer in base_model.layers[:-20]:
+        layer.trainable = False
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(1e-5),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"],
+    )
+    history = model.fit(
+        train_ds[0],
+        train_ds[1],
+        validation_data=val_ds,
+        epochs=epochs,
+        verbose=2,
+    )
+    return history.history["val_accuracy"][-1]
+
+
+def main() -> None:
+    (train_images, train_labels), (test_images, test_labels) = load_data()
+    # Use a subset for speed during demos
+    train_images = train_images[:10000]
+    train_labels = train_labels[:10000]
+    test_images = test_images[:2000]
+    test_labels = test_labels[:2000]
+
+    model, base_model = build_model(num_classes=10)
+    val_acc_initial = initial_training(
+        model,
+        (train_images, train_labels),
+        (test_images, test_labels),
+        epochs=1,
+    )
+    val_acc_finetune = fine_tune(
+        model,
+        base_model,
+        (train_images, train_labels),
+        (test_images, test_labels),
+        epochs=1,
+    )
+
+    improvement = val_acc_finetune - val_acc_initial
+    print(
+        f"Validation accuracy improved from {val_acc_initial:.4f} to {val_acc_finetune:.4f} ({improvement:+.4f})."
+    )
+
+
+if __name__ == "__main__":
+    main()
