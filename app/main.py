@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 import argparse
 import sys
 from textwrap import dedent
